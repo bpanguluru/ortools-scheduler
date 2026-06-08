@@ -1,0 +1,33 @@
+# Require CMAKE 3.20 or higher
+cmake_minimum_required(VERSION 3.20)
+
+# Project name
+project(scheduler)
+
+# Build for C++20
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+
+include(FetchContent)
+
+set(BUILD_SAMPLES OFF CACHE BOOL "" FORCE)
+set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+
+FetchContent_Declare(
+    or-tools
+    GIT_REPOSITORY https://github.com/google/or-tools.git
+    GIT_TAG        stable
+)
+
+FetchContent_MakeAvailable(or-tools)
+
+# Any source files in this directory
+set(SOURCE_FILES Main.cpp)
+
+# Name of executable
+add_executable(main ${SOURCE_FILES})
+
+# Link main vs the source library
+target_link_libraries(main ortools::ortools)
