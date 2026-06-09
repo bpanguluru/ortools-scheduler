@@ -1,5 +1,10 @@
 #include <stdlib.h>
 
+#include <set> 
+#include <numeric>
+#include <optional>
+#include <string>
+
 #include "absl/base/log_severity.h"
 #include "absl/log/globals.h"
 #include "ortools/base/init_google.h"
@@ -18,8 +23,10 @@
 // other more efficient algorithms not fully integrated in most other libraries, possibly more. 
 // Presumably, in the case of an intractible/no-solution input, you'll want to remove lower priority meetings from the input list.
 // This is best done outside of the code below, as a wrapper. 
-// On that note, example.json lists an example input to main. 
-// There are a few constraints that might be mildly handy. I.E. try to choose rooms with the minimum excess capacity beyond what is needed for a meeting.
+// On that note, for critical priority meetings, you might want to pre-set these at just the earliest hard-available, lowest-distance time for all required attendees, outside of the optimizer.
+// example.json lists an example input to main. 
+// There are a few soft constraints that might be mildly handy. I.E. try to choose rooms with the minimum excess capacity beyond what is needed for a meeting.
+// Note that each additional constraint does contribute mildly to runtime, so I left some of these minor ones out. 
 
 //self note delete later, check that the distance from attendee to location var is properly set 
 
@@ -28,7 +35,7 @@ namespace sat {
 
 //SETUP CLASSES AND SUCH
 enum class Priority { LOW = 0, MILD = 1, MEDIUM = 2, HIGH = 3, CRITICAL = 4 };
-enum {ACCESSABILITY = 15, HEALTHISSUE = 10, ENVIRONMENTREQ = 5}
+enum {ACCESSABILITY = 15, HEALTHISSUE = 10, ENVIRONMENTREQ = 5};
 
 struct Attendee {
     std::string name;
@@ -49,10 +56,10 @@ struct Attendee {
     // Composite weight: used to scale soft-constraint penalties.
     int Weight() const 
     {
-        int w = importance * 10;
+        int w = static_cast<int>importance * 10;
         if (has_accessibility_need) w += ACCESSABILITY;
-        if (has_health_issue)       w += HEALTHISSUE;
-        if (has_env_request)        w += ENVIRONMENTREQ;
+        if (has_health_issue) w += HEALTHISSUE;
+        if (has_env_request) w += ENVIRONMENTREQ;
         return w;
     }
 };
@@ -229,7 +236,7 @@ void ConstraintScheduler() {
             room_avail[l] = {locations[l].available_slots.begin(), locations[l].available_slots.end()};
     
         // feasible (start, loc) pairs
-        std::vector<std::vector<int>> feasible_table;
+        std::vector<std::vector<int64_t>> feasible_table;
 
         //from time 0 to last valid time
         for (int s = 0; s < kTotalSlots - req.duration_slots + 1; ++s) 
@@ -271,7 +278,7 @@ void ConstraintScheduler() {
             cp_model.AddLinearConstraint(start_slot[m], pref_domain.Complement()).OnlyEnforceIf(not_preferred);
             
             //penalty scaled by attendee importance and event severity
-            int penalty = att.Weight() * (req.event_type.severity + 1);
+            int penalty = att.Weight() * (static_cast<int>req.event_type.severity + 1);
             objective += LinearExpr::Term(not_preferred, penalty);
         }
 
@@ -292,18 +299,91 @@ void ConstraintScheduler() {
             objective += LinearExpr::Term(dist_var, 1);
         }
 
-        // ---- Hard constraint: higher-severity events get earlier slots ----
-        // Modelled as a soft penalty: penalise late start for critical events.
-        if (req.event_type.severity >= Priority::HIGH) {
-        int severity_w = static_cast<int>(req.event_type.severity) * 5;
-        objective += LinearExpr::WeightedSum({start_slot[m]}, {severity_w});
+        // SOFT CONSRAINT higher-severity events get earlier slots 
+        if (static_cast<int>req.event_type.severity >= Priority::HIGH) 
+        {
+            int severity_w = static_cast<int>req.event_type.severity * 5;
+            objective += LinearExpr::WeightedSum({start_slot[m]}, {severity_w});
         }
+        
+        //HARD CONSTRAINT no room double-booking
+        for (int l = 0; l < num_locs; ++l) 
+        {
+            std::vector<IntervalVar> room_intervals;
+            for (int m = 0; m < num_meetings; ++m) 
+            {
+                BoolVar uses_this_room = cp_model.NewBoolVar().WithName("uses_loc" + std::to_string(l) + "_m" + std::to_string(m));
+                cp_model.AddEquality(location_var[m], l).OnlyEnforceIf(uses_this_room);
+                cp_model.AddNotEqual(location_var[m], l).OnlyEnforceIf(uses_this_room.Not());
+
+                //interval exists if uses_this_room true
+                //interval starts at start slot, duration is the duration of the meeting, ends at some point in the domain of totalslots (start + duration)
+                IntervalVar interval = cp_model.NewOptionalIntervalVar(start_slot[m], 
+                                                                        cp_model.NewConstant(meetings[m].duration_slots), 
+                                                                        cp_model.NewIntVar(Domain(0, kTotalSlots)),
+                                                                        uses_this_room)
+                                                                        .WithName("iv_l" + std::to_string(l) + "_m" + std::to_string(m));
+                room_intervals.push_back(interval);
+            }
+        }
+        cp_model.AddNoOverlap(room_intervals);
+
+        // HARD CONSTRAINT attendees cannot attend two meetings simultaneously
+        for (int ai = 0; ai < attendees.size(); ++ai) 
+        {
+            std::vector<IntervalVar> att_intervals;
+            for (int m = 0; m < num_meetings; ++m) 
+            {
+                bool in_meeting = false;
+                //for each attendee, check if in a meeting
+                for (int x : meetings[m].attendee_indices)
+                {
+                    if (x == ai) 
+                    { 
+                        in_meeting = true; 
+                        break; 
+                    }
+                }
+                if (!in_meeting) continue;
+
+                //build and push an interval
+                IntervalVar iv = cp_model.NewIntervalVar(start_slot[m],
+                                                            cp_model.NewConstant(meetings[m].duration_slots),
+                                                            cp_model.NewIntVar(Domain(0, kTotalSlots))).WithName("att_iv_a" + std::to_string(ai) +"_m" + std::to_string(m));
+                att_intervals.push_back(iv);
+            }
+        }
+        cp_model.AddNoOverlap(att_intervals);
+    }
+
+    cp_model.Minimize(objective);
+    const CpSolverResponse response = Solve(cp_model.Build());
+
+    //logging results
+    if (response.status() == CpSolverStatus::OPTIMAL || response.status() == CpSolverStatus::FEASIBLE) 
+    {
+        LOG(INFO) << "=== Schedule found (objective = " << response.objective_value() << ") ===";
+        for (int m = 0; m < num_meetings; ++m) 
+        {
+            int s = SolutionIntegerValue(response, start_slot[m]);
+            int l = SolutionIntegerValue(response, location_var[m]);
+            LOG(INFO) << "[" << meetings[m].title << "]"
+                        << "  start_slot=" << s
+                        << "  location=" << locations[l].name
+                        << "  duration=" << meetings[m].duration_slots << " slot(s)";
+            for (int ai : meetings[m].attendee_indices)
+                LOG(INFO) << "  attendee: " << attendees[ai].name;
+            
+            LOG(INFO);
+        }
+    } 
+    else 
+    {
+        LOG(INFO) << "No feasible schedule found.\n";
     }
         
-    }
-
-
 }
+
 
 }  // namespace sat
 }  // namespace operations_research
