@@ -1,7 +1,7 @@
 Use init_run.sh first to allow dependencies and all to compile.
 Use testing_rn.sh afterward for some slight time-saving. 
 
-##Some notes and assumptions
+## Some notes and assumptions
 
 - The priority of the meeting scales up the priority of preferences of the attendees, and schedules the meeting earlier if possible.
 - This is currently just a base CPSAT implementation -- improvements are on the way in terms of MUS-finding, semantic preservation, weighted MUS-finding, other more efficient algorithms not fully integrated in most other libraries, possibly more. 
