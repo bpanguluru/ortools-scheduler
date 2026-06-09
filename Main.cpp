@@ -56,7 +56,7 @@ struct Attendee {
     // Composite weight: used to scale soft-constraint penalties.
     int Weight() const 
     {
-        int w = static_cast<int>importance * 10;
+        int w = static_cast<int>(importance) * 10;
         if (has_accessibility_need) w += ACCESSABILITY;
         if (has_health_issue) w += HEALTHISSUE;
         if (has_env_request) w += ENVIRONMENTREQ;
@@ -182,7 +182,8 @@ void ConstraintScheduler() {
     LinearExpr objective;
 
     //for each meeting 
-    for (int m = 0; m < num_meetings; ++m) {
+    for (int m = 0; m < num_meetings; ++m) 
+    {
         const MeetingRequest& req = meetings[m];
     
         //intersection of hard-available slots
@@ -261,7 +262,10 @@ void ConstraintScheduler() {
         }
         //meeting m must be something from the table of feasible options 
         //(this is essentially the "location/slot fits in valid times given loc duration" constraint)
-        cp_model.AddAllowedAssignments({start_slot[m], location_var[m]}, feasible_table);
+
+        auto table1 = cp_model.AddAllowedAssignments({start_slot[m], location_var[m]});
+        for (const auto& t : feasible_table) 
+            table1.AddTuple(t);
 
         //SOFT CONSTRAINT - prefer slots preferred by high-weight attendees
         for (int ai : req.attendee_indices) 
@@ -278,7 +282,7 @@ void ConstraintScheduler() {
             cp_model.AddLinearConstraint(start_slot[m], pref_domain.Complement()).OnlyEnforceIf(not_preferred);
             
             //penalty scaled by attendee importance and event severity
-            int penalty = att.Weight() * (static_cast<int>req.event_type.severity + 1);
+            int penalty = att.Weight() * (static_cast<int>(req.event_type.severity) + 1);
             objective += LinearExpr::Term(not_preferred, penalty);
         }
 
@@ -300,58 +304,58 @@ void ConstraintScheduler() {
         }
 
         // SOFT CONSRAINT higher-severity events get earlier slots 
-        if (static_cast<int>req.event_type.severity >= Priority::HIGH) 
+        if (req.event_type.severity >= Priority::HIGH) 
         {
-            int severity_w = static_cast<int>req.event_type.severity * 5;
+            int severity_w = static_cast<int>(req.event_type.severity) * 5;
             objective += LinearExpr::WeightedSum({start_slot[m]}, {severity_w});
         }
+    }
         
-        //HARD CONSTRAINT no room double-booking
-        for (int l = 0; l < num_locs; ++l) 
+    //HARD CONSTRAINT no room double-booking
+    for (int l = 0; l < num_locs; ++l) 
+    {
+        std::vector<IntervalVar> room_intervals;
+        for (int m = 0; m < num_meetings; ++m) 
         {
-            std::vector<IntervalVar> room_intervals;
-            for (int m = 0; m < num_meetings; ++m) 
-            {
-                BoolVar uses_this_room = cp_model.NewBoolVar().WithName("uses_loc" + std::to_string(l) + "_m" + std::to_string(m));
-                cp_model.AddEquality(location_var[m], l).OnlyEnforceIf(uses_this_room);
-                cp_model.AddNotEqual(location_var[m], l).OnlyEnforceIf(uses_this_room.Not());
+            BoolVar uses_this_room = cp_model.NewBoolVar().WithName("uses_loc" + std::to_string(l) + "_m" + std::to_string(m));
+            cp_model.AddEquality(location_var[m], l).OnlyEnforceIf(uses_this_room);
+            cp_model.AddNotEqual(location_var[m], l).OnlyEnforceIf(uses_this_room.Not());
 
-                //interval exists if uses_this_room true
-                //interval starts at start slot, duration is the duration of the meeting, ends at some point in the domain of totalslots (start + duration)
-                IntervalVar interval = cp_model.NewOptionalIntervalVar(start_slot[m], 
-                                                                        cp_model.NewConstant(meetings[m].duration_slots), 
-                                                                        cp_model.NewIntVar(Domain(0, kTotalSlots)),
-                                                                        uses_this_room)
-                                                                        .WithName("iv_l" + std::to_string(l) + "_m" + std::to_string(m));
-                room_intervals.push_back(interval);
-            }
+            //interval exists if uses_this_room true
+            //interval starts at start slot, duration is the duration of the meeting, ends at some point in the domain of totalslots (start + duration)
+            IntervalVar interval = cp_model.NewOptionalIntervalVar(start_slot[m], 
+                                                                    cp_model.NewConstant(meetings[m].duration_slots), 
+                                                                    cp_model.NewIntVar(Domain(0, kTotalSlots)),
+                                                                    uses_this_room)
+                                                                    .WithName("iv_l" + std::to_string(l) + "_m" + std::to_string(m));
+            room_intervals.push_back(interval);
         }
         cp_model.AddNoOverlap(room_intervals);
+    }
 
-        // HARD CONSTRAINT attendees cannot attend two meetings simultaneously
-        for (int ai = 0; ai < attendees.size(); ++ai) 
+    // HARD CONSTRAINT attendees cannot attend two meetings simultaneously
+    for (int ai = 0; ai < attendees.size(); ++ai) 
+    {
+        std::vector<IntervalVar> att_intervals;
+        for (int m = 0; m < num_meetings; ++m) 
         {
-            std::vector<IntervalVar> att_intervals;
-            for (int m = 0; m < num_meetings; ++m) 
+            bool in_meeting = false;
+            //for each attendee, check if in a meeting
+            for (int x : meetings[m].attendee_indices)
             {
-                bool in_meeting = false;
-                //for each attendee, check if in a meeting
-                for (int x : meetings[m].attendee_indices)
-                {
-                    if (x == ai) 
-                    { 
-                        in_meeting = true; 
-                        break; 
-                    }
+                if (x == ai) 
+                { 
+                    in_meeting = true; 
+                    break; 
                 }
-                if (!in_meeting) continue;
-
-                //build and push an interval
-                IntervalVar iv = cp_model.NewIntervalVar(start_slot[m],
-                                                            cp_model.NewConstant(meetings[m].duration_slots),
-                                                            cp_model.NewIntVar(Domain(0, kTotalSlots))).WithName("att_iv_a" + std::to_string(ai) +"_m" + std::to_string(m));
-                att_intervals.push_back(iv);
             }
+            if (!in_meeting) continue;
+
+            //build and push an interval
+            IntervalVar iv = cp_model.NewIntervalVar(start_slot[m],
+                                                        cp_model.NewConstant(meetings[m].duration_slots),
+                                                        cp_model.NewIntVar(Domain(0, kTotalSlots))).WithName("att_iv_a" + std::to_string(ai) +"_m" + std::to_string(m));
+            att_intervals.push_back(iv);
         }
         cp_model.AddNoOverlap(att_intervals);
     }
@@ -363,11 +367,14 @@ void ConstraintScheduler() {
     if (response.status() == CpSolverStatus::OPTIMAL || response.status() == CpSolverStatus::FEASIBLE) 
     {
         LOG(INFO) << "=== Schedule found (objective = " << response.objective_value() << ") ===";
+        if (response.status() == CpSolverStatus::OPTIMAL) LOG(INFO) << "OPTIMAL";
+        if (response.status() == CpSolverStatus::FEASIBLE) LOG(INFO) << "FEASIBLE";
         for (int m = 0; m < num_meetings; ++m) 
         {
             int s = SolutionIntegerValue(response, start_slot[m]);
             int l = SolutionIntegerValue(response, location_var[m]);
             LOG(INFO) << "[" << meetings[m].title << "]"
+                        << "  severity=" << static_cast<int>(meetings[m].event_type.severity)
                         << "  start_slot=" << s
                         << "  location=" << locations[l].name
                         << "  duration=" << meetings[m].duration_slots << " slot(s)";
