@@ -4,6 +4,7 @@
 #include <numeric>
 #include <optional>
 #include <string>
+#include <fstream>
 
 #include "absl/base/log_severity.h"
 #include "absl/log/globals.h"
@@ -13,6 +14,9 @@
 #include "ortools/sat/cp_model.pb.h"
 #include "ortools/sat/cp_model_solver.h"
 #include "ortools/util/sorted_interval_list.h"
+
+//json
+#include "json.hpp"
 
 
 
@@ -28,7 +32,7 @@
 // There are a few soft constraints that might be mildly handy. I.E. try to choose rooms with the minimum excess capacity beyond what is needed for a meeting.
 // Note that each additional constraint does contribute mildly to runtime, so I left some of these minor ones out. 
 
-//self note delete later, check that the distance from attendee to location var is properly set 
+//self note delete later, verify weights
 
 namespace operations_research {
 namespace sat {
@@ -96,6 +100,15 @@ struct MeetingRequest
     std::optional<int> forced_location;
 };
 
+//result of parsed input json
+struct SchedulerInput 
+{
+    int total_slots;
+    std::vector<Attendee> attendees;
+    std::vector<Location> locations;
+    std::vector<MeetingRequest> meetings;
+};
+
 //helper that collect slots that are available for all required attendees (preferences aside)
 static std::vector<int> HardAvailableSlots(const MeetingRequest& req, const std::vector<Attendee>& attendees, int total_slots) 
 {
@@ -120,55 +133,128 @@ static std::vector<int> HardAvailableSlots(const MeetingRequest& req, const std:
     return result;
 }
 
-//DUMMY CLAUDE-GENERATED DATA FOR NOW, PREPROCESSING PIPELINE LATER BASED ON REQS
-void ConstraintScheduler() {
-     
-    // e.g. Mon–Fri 08:00–18:00 in 30-min blocks
-    int kTotalSlots = 20; 
-    
-    std::vector<Attendee> attendees = {
-        {"Alice (VP)",   Priority::CRITICAL, false, false, false,
-        {0,1,2,3,4,5,6,7,8,9,10},   {2,3,4}},
-        {"Bob (Manager)", Priority::HIGH,   false, true,  false,
-        {2,3,4,5,6,7,8,9,10,11,12}, {4,5,6}},
-        {"Carol (IC)",   Priority::MEDIUM,  true,  false, true,
-        {0,1,2,3,4,5,6,7,8},        {0,1,2}},
-        {"Dave (IC)",    Priority::LOW,     false, false, false,
-        {5,6,7,8,9,10,11,12,13},    {7,8,9}},
-    };
-    
-    std::vector<Location> locations = {
-        {"Small Conf Room A", 4,  "conference_room", {0,1,2,3,4,5,6,7,8,9,10},
-        {1, 3, 5, 2}},   // distance to each attendee
-        {"Large Conf Room B", 12, "conference_room", {3,4,5,6,7,8,9,10,11,12},
-        {4, 2, 1, 6}},
-        {"Auditorium",        50, "auditorium",      {8,9,10,11,12,13,14},
-        {2, 8, 3, 4}},
-        {"Virtual / Teams",   999,"virtual",         /*always free*/ [&]{
-        std::vector<int> v(kTotalSlots); std::iota(v.begin(), v.end(), 0);
-        return v;}(),
-        {0,0,0,0}},
-    };
-    
-    std::vector<MeetingRequest> meetings = {
-        {"Q2 All-Hands",
-        {"All-Hands", Priority::CRITICAL, "auditorium"},
-        {0,1,2,3}, 2, std::nullopt},
-    
-        {"1:1 Alice-Bob",
-        {"1:1", Priority::HIGH, "conference_room"},
-        {0,1},   1, std::nullopt},
-    
-        {"Carol Accessibility Check-in",
-        {"Check-in", Priority::MEDIUM, "conference_room"},
-        {0,2},   1, std::nullopt},
-    
-        {"Team Standup",
-        {"Standup", Priority::MEDIUM, ""},   // any room type
-        {0,1,2,3}, 1, std::nullopt},
+//JSON PARSING RELATED STUFF
+using json = nlohmann::json;
+
+
+//users can specify with number 0-4 or with upper/lowercase level, returns Priority obj
+static Priority ParsePriority(const json& j) 
+{
+    if (j.is_number_integer()) 
+    {
+        int p = j.get<int>();
+        if (p < 0 || p > 4) 
+            throw std::runtime_error("Priority int must be in [0, 4]");
+        return static_cast<Priority>(p);
+    }
+
+    std::string s = j.get<std::string>();
+    static const std::unordered_map<std::string, Priority> table = {
+        {"LOW", Priority::LOW},
+        {"MILD", Priority::MILD},
+        {"MEDIUM", Priority::MEDIUM},
+        {"HIGH", Priority::HIGH},
+        {"CRITICAL", Priority::CRITICAL},
+        {"low", Priority::LOW},
+        {"mild", Priority::MILD},
+        {"medium", Priority::MEDIUM},
+        {"high", Priority::HIGH},
+        {"critical", Priority::CRITICAL},
     };
 
-    //ACTUAL CPSAT SOLVING STUFF HERE
+    auto it = table.find(s);
+    if (it == table.end()) 
+        throw std::runtime_error("Unknown priority: " + s);
+
+    return it->second;
+}
+
+static SchedulerInput ParseSchedulerInput(const json& j) 
+{
+    SchedulerInput input;
+    input.total_slots = j.at("total_slots").get<int>();
+
+    for (const auto& a : j.at("attendees")) 
+    {
+        input.attendees.push_back({
+            a.at("name").get<std::string>(),
+            ParsePriority(a.at("importance")),
+            a.value("has_accessibility_need", false),
+            a.value("has_health_issue", false),
+            a.value("has_env_request", false),
+            a.at("available_slots").get<std::vector<int>>(),
+            a.value("preferred_slots", std::vector<int>{})
+        });
+    }
+
+    for (const auto& l : j.at("locations")) 
+    {
+        input.locations.push_back({
+            l.at("name").get<std::string>(),
+            l.at("capacity").get<int>(),
+            l.at("type").get<std::string>(),
+            l.at("available_slots").get<std::vector<int>>(),
+            l.value("distance_to_attendee", std::vector<int>{})
+        });
+    }
+
+    for (const auto& m : j.at("meetings")) 
+    {
+        EventType event_type {
+            m.at("event_type").at("name").get<std::string>(),
+            ParsePriority(m.at("event_type").at("severity")),
+            m.at("event_type").value("required_location_type", "")
+        };
+
+        std::optional<int> forced_location = std::nullopt;
+        if (m.contains("forced_location") && !m.at("forced_location").is_null()) 
+        {
+            forced_location = m.at("forced_location").get<int>();
+        }
+
+        input.meetings.push_back({
+            m.at("title").get<std::string>(),
+            event_type,
+            m.at("attendee_indices").get<std::vector<int>>(),
+            m.at("duration_slots").get<int>(),
+            forced_location
+        });
+    }
+
+    return input;
+}
+
+static SchedulerInput LoadSchedulerInputFromArg(const std::string& arg) 
+{
+    json j;
+
+    //Both of the following are accepted 
+    //  ./main example.json
+    //  ./main '{"total_slots":20,...}'
+    if (!arg.empty() && arg.front() == '{') 
+    {
+        j = json::parse(arg);
+    } 
+    else //its a filename
+    {
+        std::ifstream in(arg);
+        if (!in) 
+            throw std::runtime_error("Could not open JSON input file: " + arg);
+        in >> j;
+    }
+
+    return ParseSchedulerInput(j);
+}
+
+
+void ConstraintScheduler(const SchedulerInput& input) {
+     
+    const int kTotalSlots = input.total_slots;
+    const std::vector<Attendee>& attendees = input.attendees;
+    const std::vector<Location>& locations = input.locations;
+    const std::vector<MeetingRequest>& meetings = input.meetings;
+
+    //ACTUAL CPSAT CONSTRAINT STUFF BELOW HERE
     CpModelBuilder cp_model;
  
     int num_meetings = meetings.size();
@@ -207,7 +293,7 @@ void ConstraintScheduler() {
         //LOCATION DOMAIN
         if (req.forced_location.has_value()) 
         {
-            //this is a user overrid
+            //this is a user override
             location_var[m] = cp_model.NewConstant(*req.forced_location).WithName("loc_" + req.title);
         } 
         else 
@@ -398,6 +484,8 @@ void ConstraintScheduler() {
 int main(int argc, char* argv[]) {
   InitGoogle(argv[0], &argc, &argv, true);
   absl::SetStderrThreshold(absl::LogSeverityAtLeast::kInfo);
-  operations_research::sat::ConstraintScheduler();
+
+  operations_research::sat::SchedulerInput input = operations_research::sat::LoadSchedulerInputFromArg(argv[1]);
+  operations_research::sat::ConstraintScheduler(input);
   return EXIT_SUCCESS;
 }

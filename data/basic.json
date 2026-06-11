@@ -1,0 +1,117 @@
+{
+    "total_slots": 20,
+    "attendees": [
+      {
+        "name": "Alice (VP)",
+        "importance": "CRITICAL",
+        "has_accessibility_need": false,
+        "has_health_issue": false,
+        "has_env_request": false,
+        "available_slots": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+        "preferred_slots": [2, 3, 4]
+      },
+      {
+        "name": "Bob (Manager)",
+        "importance": "HIGH",
+        "has_accessibility_need": false,
+        "has_health_issue": true,
+        "has_env_request": false,
+        "available_slots": [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+        "preferred_slots": [4, 5, 6]
+      },
+      {
+        "name": "Carol (IC)",
+        "importance": "MEDIUM",
+        "has_accessibility_need": true,
+        "has_health_issue": false,
+        "has_env_request": true,
+        "available_slots": [0, 1, 2, 3, 4, 5, 6, 7, 8],
+        "preferred_slots": [0, 1, 2]
+      },
+      {
+        "name": "Dave (IC)",
+        "importance": "LOW",
+        "has_accessibility_need": false,
+        "has_health_issue": false,
+        "has_env_request": false,
+        "available_slots": [5, 6, 7, 8, 9, 10, 11, 12, 13],
+        "preferred_slots": [7, 8, 9]
+      }
+    ],
+    "locations": [
+      {
+        "name": "Small Conf Room A",
+        "capacity": 4,
+        "type": "conference_room",
+        "available_slots": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+        "distance_to_attendee": [1, 3, 5, 2]
+      },
+      {
+        "name": "Large Conf Room B",
+        "capacity": 12,
+        "type": "conference_room",
+        "available_slots": [3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+        "distance_to_attendee": [4, 2, 1, 6]
+      },
+      {
+        "name": "Auditorium",
+        "capacity": 50,
+        "type": "auditorium",
+        "available_slots": [8, 9, 10, 11, 12, 13, 14],
+        "distance_to_attendee": [2, 8, 3, 4]
+      },
+      {
+        "name": "Virtual / Teams",
+        "capacity": 999,
+        "type": "virtual",
+        "available_slots": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
+        "distance_to_attendee": [0, 0, 0, 0]
+      }
+    ],
+    "meetings": [
+      {
+        "title": "Q2 All-Hands",
+        "event_type": {
+          "name": "All-Hands",
+          "severity": "CRITICAL",
+          "required_location_type": "auditorium"
+        },
+        "attendee_indices": [0, 1, 2, 3],
+        "duration_slots": 2,
+        "forced_location": null
+      },
+      {
+        "title": "1:1 Alice-Bob",
+        "event_type": {
+          "name": "1:1",
+          "severity": "HIGH",
+          "required_location_type": "conference_room"
+        },
+        "attendee_indices": [0, 1],
+        "duration_slots": 1,
+        "forced_location": null
+      },
+      {
+        "title": "Carol Accessibility Check-in",
+        "event_type": {
+          "name": "Check-in",
+          "severity": "MEDIUM",
+          "required_location_type": "conference_room"
+        },
+        "attendee_indices": [0, 2],
+        "duration_slots": 1,
+        "forced_location": null
+      },
+      {
+        "title": "Team Standup",
+        "event_type": {
+          "name": "Standup",
+          "severity": "MEDIUM",
+          "required_location_type": ""
+        },
+        "attendee_indices": [0, 1, 2, 3],
+        "duration_slots": 1,
+        "forced_location": null
+      }
+    ]
+  }

@@ -1,1 +1,1 @@
-cmake --build build -j2 && ./build/main
+cmake --build build -j2 && ./build/main data/basic.json
