@@ -1,5 +1,5 @@
 First use init_run.sh to allow dependencies and all to compile.
-Use testing_run.sh afterward to save a bit of time if youre just recompiling main.
+Use testing_run.sh afterward to save a bit of time if you're just recompiling main.
 
 Main takes in a path to a json file or a json string as input. An example json is in the data folder. 
 
