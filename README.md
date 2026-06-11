@@ -3,8 +3,9 @@ Use testing_run.sh afterward to save a bit of time if you're just recompiling ma
 
 Main takes in a path to a json file or a json string as input. An example json is in the data folder. 
 
-Example run:
-./build/main data/basic.json
+Example runs:
+- ./build/main data/basic.json
+- ./build/main '{"total_slots":20,...}'
 
 ## Some notes and assumptions
 
